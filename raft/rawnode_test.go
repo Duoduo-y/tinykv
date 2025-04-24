@@ -186,7 +186,7 @@ func TestRawNodeStart2AC(t *testing.T) {
 
 func TestRawNodeRestart2AC(t *testing.T) {
 	entries := []pb.Entry{
-		{Term: 1, Index: 1},
+		{Term: 1, Index: 1}, //committed
 		{Term: 1, Index: 2, Data: []byte("foo")},
 	}
 	st := pb.HardState{Term: 1, Commit: 1}
