@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
+// 是一个封装了 gRPC 流的结构体，用于与单个节点进行 Raft 消息通信。
 type raftConn struct {
 	streamMu sync.Mutex
 	stream   tinykvpb.TinyKv_RaftClient
@@ -54,6 +55,7 @@ func (c *raftConn) Send(msg *raft_serverpb.RaftMessage) error {
 	return c.stream.Send(msg)
 }
 
+// 是一个管理多个 raftConn 的客户端，用于与多个节点通信。
 type RaftClient struct {
 	config *config.Config
 	sync.RWMutex

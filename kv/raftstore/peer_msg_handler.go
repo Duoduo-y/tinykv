@@ -9,10 +9,13 @@ import (
 	"github.com/pingcap-incubator/tinykv/kv/raftstore/runner"
 	"github.com/pingcap-incubator/tinykv/kv/raftstore/snap"
 	"github.com/pingcap-incubator/tinykv/kv/raftstore/util"
+	"github.com/pingcap-incubator/tinykv/kv/util/engine_util"
 	"github.com/pingcap-incubator/tinykv/log"
+	"github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 	"github.com/pingcap-incubator/tinykv/proto/pkg/metapb"
 	"github.com/pingcap-incubator/tinykv/proto/pkg/raft_cmdpb"
 	rspb "github.com/pingcap-incubator/tinykv/proto/pkg/raft_serverpb"
+	"github.com/pingcap-incubator/tinykv/raft"
 	"github.com/pingcap-incubator/tinykv/scheduler/pkg/btree"
 	"github.com/pingcap/errors"
 )
@@ -42,10 +45,112 @@ func (d *peerMsgHandler) HandleRaftReady() {
 	if d.stopped {
 		return
 	}
+	if d.peer.RaftGroup.HasReady() {
+		rd := d.peer.RaftGroup.Ready()
+		// log.DIYf(log.LOG_DIY2, "", "%s handle raft ready %+v", d.Tag, rd)
+		if len(rd.CommittedEntries) > 0 {
+			d.applyCommittedEntries(&rd)
+		}
+		d.peer.peerStorage.SaveReadyState(&rd)
+		d.Send(d.ctx.trans, rd.Messages)
+
+		d.peer.RaftGroup.Advance(rd)
+	}
 	// Your Code Here (2B).
+}
+func (d *peerMsgHandler) applyCommittedEntries(ready *raft.Ready) error {
+	// KvDB := d.peer.peerStorage.Engines.Kv
+	for _, entry := range ready.CommittedEntries {
+		msg_request := raft_cmdpb.RaftCmdRequest{}
+		msg_response := new(raft_cmdpb.RaftCmdResponse)
+
+		if err := msg_request.Unmarshal(entry.Data); err != nil {
+			log.Errorf("%s failed to unmarshal entry %v", d.Tag, err)
+			return err
+		}
+		// log.DIYf(log.LOG_DIY3, "", "%s apply committed entries %s", d.Tag, msg_request.String())
+		for _, req := range msg_request.Requests {
+			response, err := d.handlereq(req)
+			if err != nil {
+				return err
+			}
+			msg_response.Responses = append(msg_response.Responses, response)
+			msg_response.Header = &raft_cmdpb.RaftResponseHeader{
+				CurrentTerm: d.Term(),
+			}
+		}
+		d.donePropose(entry, msg_response)
+	}
+	return nil
+
+}
+func (d *peerMsgHandler) handlereq(req *raft_cmdpb.Request) (*raft_cmdpb.Response, error) {
+	response := &raft_cmdpb.Response{
+		CmdType: req.CmdType,
+	}
+	switch req.CmdType {
+	case raft_cmdpb.CmdType_Invalid:
+
+	case raft_cmdpb.CmdType_Get:
+		val, err := engine_util.GetCF(d.ctx.engine.Kv, req.Get.Cf, req.Get.GetKey())
+		if err != nil {
+			log.Errorf("%s failed to get %v", d.Tag, err)
+			return nil, err
+		}
+		response.Get = &raft_cmdpb.GetResponse{
+			Value: val,
+		}
+	case raft_cmdpb.CmdType_Put:
+		if err := engine_util.PutCF(d.ctx.engine.Kv, req.Put.Cf, req.Put.GetKey(), req.Put.GetValue()); err != nil {
+			log.Errorf("%s failed to put %v", d.Tag, err)
+			return nil, err
+		}
+		response.Put = &raft_cmdpb.PutResponse{}
+	case raft_cmdpb.CmdType_Delete:
+		if err := engine_util.DeleteCF(d.ctx.engine.Kv, req.Delete.Cf, req.Delete.GetKey()); err != nil {
+			log.Errorf("%s failed to delete %v", d.Tag, err)
+			return nil, err
+		}
+		response.Delete = &raft_cmdpb.DeleteResponse{}
+	case raft_cmdpb.CmdType_Snap:
+		response.Snap = &raft_cmdpb.SnapResponse{}
+	}
+	return response, nil
+}
+
+func (d *peerMsgHandler) donePropose(entry eraftpb.Entry, msg_response *raft_cmdpb.RaftCmdResponse) {
+	if len(d.proposals) == 0 {
+		log.Errorf("%s no proposals to done", d.Tag)
+		return
+	}
+	for len(d.proposals) > 0 {
+		proposal := d.proposals[0]
+		if proposal.index < entry.Index {
+			d.proposals = d.proposals[1:]
+			continue
+		} else if proposal.index > entry.Index {
+			proposal.cb.Done(ErrResp(&util.ErrStaleCommand{}))
+			return
+		} else {
+			//可能由于领导者的变化，一些日志没有被提交，就被新的领导者的日志所覆盖。
+			// 但是客户端并不知道，仍然在等待响应。所以你应该返回这个命令，让客户端知道并再次重试该命令。
+			if proposal.term < entry.Term {
+				proposal.cb.Done(ErrResp(&util.ErrStaleCommand{}))
+				return
+			} else if proposal.term > entry.Term {
+				d.proposals = d.proposals[1:]
+				continue
+			} else {
+				proposal.cb.Done(msg_response)
+				d.proposals = d.proposals[1:]
+			}
+		}
+	}
+
 }
 
 func (d *peerMsgHandler) HandleMsg(msg message.Msg) {
+
 	switch msg.Type {
 	case message.MsgTypeRaftMessage:
 		raftMsg := msg.Data.(*rspb.RaftMessage)
@@ -57,6 +162,9 @@ func (d *peerMsgHandler) HandleMsg(msg message.Msg) {
 		d.proposeRaftCommand(raftCMD.Request, raftCMD.Callback)
 	case message.MsgTypeTick:
 		d.onTick()
+		if d.IsLeader() {
+			log.DIYf(log.LOG_DIY2, "WOW", "%d handle message Tick", d.PeerId())
+		}
 	case message.MsgTypeSplitRegion:
 		split := msg.Data.(*message.MsgSplitRegion)
 		log.Infof("%s on split with %v", d.Tag, split.SplitKey)
@@ -108,12 +216,38 @@ func (d *peerMsgHandler) preProposeRaftCommand(req *raft_cmdpb.RaftCmdRequest) e
 }
 
 func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
-	err := d.preProposeRaftCommand(msg)
-	if err != nil {
+	log.DIYf(log.LOG_DIY3, "", "%s propose raft command %s", d.Tag, msg)
+
+	if err := d.preProposeRaftCommand(msg); err != nil {
 		cb.Done(ErrResp(err))
 		return
 	}
+	if msg.Requests != nil {
+
+		data, err := msg.Marshal()
+		if err != nil {
+			log.Errorf("%s failed to marshal request %v", d.Tag, err)
+			cb.Done(ErrResp(err))
+			return
+		}
+
+		if err := d.RaftGroup.Propose(data); err != nil {
+			log.Errorf("%s failed to propose request %v", d.Tag, err)
+			cb.Done(ErrResp(err))
+			return
+		}
+
+		proposal := &proposal{
+			index: d.nextProposalIndex(),
+			term:  d.Term(),
+			cb:    cb,
+		}
+		d.proposals = append(d.proposals, proposal)
+		log.DIYf(log.LOG_DIY3, "Proposal", "%d proposal callback %v", d.PeerId(), proposal)
+
+	}
 	// Your Code Here (2B).
+
 }
 
 func (d *peerMsgHandler) onTick() {
@@ -168,21 +302,27 @@ func (d *peerMsgHandler) onRaftMsg(msg *rspb.RaftMessage) error {
 		return nil
 	}
 	if d.stopped {
+		log.Infof("%s is stopped, ignore raft message %s", d.Tag, msg)
 		return nil
 	}
 	if msg.GetIsTombstone() {
 		// we receive a message tells us to remove self.
 		d.handleGCPeerMsg(msg)
+		log.DIY(log.LOG_DIY1, "handleGCPeerMsg")
 		return nil
 	}
 	if d.checkMessage(msg) {
+		log.DIY(log.LOG_DIY1, "checkmessage")
 		return nil
 	}
 	key, err := d.checkSnapshot(msg)
 	if err != nil {
+		log.DIY(log.LOG_DIY1, "err")
 		return err
 	}
 	if key != nil {
+		log.DIY(log.LOG_DIY1, "key")
+
 		// If the snapshot file is not used again, then it's OK to
 		// delete them here. If the snapshot file will be reused when
 		// receiving, then it will fail to pass the check again, so
@@ -194,9 +334,12 @@ func (d *peerMsgHandler) onRaftMsg(msg *rspb.RaftMessage) error {
 		d.ctx.snapMgr.DeleteSnapshot(*key, s, false)
 		return nil
 	}
+	// log.DIY(log.LOG_DIY1, "insertpeercache")
 	d.insertPeerCache(msg.GetFromPeer())
+	// log.DIYf(log.LOG_DIY1, "", "%s handle raft message %s from %d to %d", d.Tag, msg.GetMessage().GetMsgType(), msg.GetFromPeer().GetId(), msg.GetToPeer().GetId())
 	err = d.RaftGroup.Step(*msg.GetMessage())
 	if err != nil {
+		// log.DIY(log.LOG_DIY4, "raftgroup step err")
 		return err
 	}
 	if d.AnyNewPeerCatchUp(msg.FromPeer.Id) {
@@ -223,9 +366,9 @@ func (d *peerMsgHandler) validateRaftMessage(msg *rspb.RaftMessage) bool {
 	return true
 }
 
-/// Checks if the message is sent to the correct peer.
-///
-/// Returns true means that the message can be dropped silently.
+// / Checks if the message is sent to the correct peer.
+// /
+// / Returns true means that the message can be dropped silently.
 func (d *peerMsgHandler) checkMessage(msg *rspb.RaftMessage) bool {
 	fromEpoch := msg.GetRegionEpoch()
 	isVoteMsg := util.IsVoteMessage(msg.Message)

@@ -54,6 +54,7 @@ func NewCluster(count int, schedulerClient *MockSchedulerClient, simulator Simul
 }
 
 func (c *Cluster) Start() {
+	// log.Infof("start cluster with %d stores", c.count)
 	ctx := context.TODO()
 	clusterID := c.schedulerClient.GetClusterID(ctx)
 
@@ -186,7 +187,10 @@ func (c *Cluster) AllocPeer(storeID uint64) *metapb.Peer {
 func (c *Cluster) Request(key []byte, reqs []*raft_cmdpb.Request, timeout time.Duration) (*raft_cmdpb.RaftCmdResponse, *badger.Txn) {
 	startTime := time.Now()
 	for i := 0; i < 10 || time.Since(startTime) < timeout; i++ {
+		// log.Debugf("get region for %s", hex.EncodeToString(key))
+
 		region := c.GetRegion(key)
+
 		regionID := region.GetId()
 		req := NewRequest(regionID, region.RegionEpoch, reqs)
 		resp, txn := c.CallCommandOnLeader(&req, timeout)
@@ -213,6 +217,7 @@ func (c *Cluster) CallCommandOnLeader(request *raft_cmdpb.RaftCmdRequest, timeou
 	startTime := time.Now()
 	regionID := request.Header.RegionId
 	leader := c.LeaderOfRegion(regionID)
+	log.DIYf(log.LOG_DIY1, "!!!", "Now leader id %d", leader.Id)
 	for {
 		if time.Since(startTime) > timeout {
 			return nil, nil
@@ -302,6 +307,7 @@ func (c *Cluster) MustPut(key, value []byte) {
 
 func (c *Cluster) MustPutCF(cf string, key, value []byte) {
 	req := NewPutCfCmd(cf, key, value)
+	// log.DIY(log.LOG_DIY1, "MustPutCF", "调用request")
 	resp, _ := c.Request(key, []*raft_cmdpb.Request{req}, 5*time.Second)
 	if resp.Header.Error != nil {
 		panic(resp.Header.Error)
@@ -327,6 +333,8 @@ func (c *Cluster) Get(key []byte) []byte {
 
 func (c *Cluster) GetCF(cf string, key []byte) []byte {
 	req := NewGetCfCmd(cf, key)
+	// log.DIY(log.LOG_DIY1, "GetCF", "调用request")
+
 	resp, _ := c.Request(key, []*raft_cmdpb.Request{req}, 5*time.Second)
 	if resp.Header.Error != nil {
 		panic(resp.Header.Error)
@@ -346,6 +354,7 @@ func (c *Cluster) MustDelete(key []byte) {
 
 func (c *Cluster) MustDeleteCF(cf string, key []byte) {
 	req := NewDeleteCfCmd(cf, key)
+	// log.DIY(log.LOG_DIY1, "MustDeleteCF", "调用request")
 	resp, _ := c.Request(key, []*raft_cmdpb.Request{req}, 5*time.Second)
 	if resp.Header.Error != nil {
 		panic(resp.Header.Error)

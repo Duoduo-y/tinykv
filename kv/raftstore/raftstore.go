@@ -104,8 +104,8 @@ type Transport interface {
 	Send(msg *rspb.RaftMessage) error
 }
 
-/// loadPeers loads peers in this store. It scans the db engine, loads all regions and their peers from it
-/// WARN: This store should not be used before initialized.
+// / loadPeers loads peers in this store. It scans the db engine, loads all regions and their peers from it
+// / WARN: This store should not be used before initialized.
 func (bs *Raftstore) loadPeers() ([]*peer, error) {
 	// Scan region meta to get saved regions.
 	startKey := meta.RegionMetaMinKey
@@ -157,6 +157,7 @@ func (bs *Raftstore) loadPeers() ([]*peer, error) {
 			if err != nil {
 				return err
 			}
+			// log.Debugf("load region %d, state %s", region.Id, localState.State)
 			ctx.storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: region})
 			ctx.storeMeta.regions[regionID] = region
 			// No need to check duplicated here, because we use region id as the key
@@ -272,6 +273,7 @@ func (bs *Raftstore) startWorkers(peers []*peer) {
 	go sw.run(bs.closeCh, bs.wg)
 	router.sendStore(message.Msg{Type: message.MsgTypeStoreStart, Data: ctx.store})
 	for i := 0; i < len(peers); i++ {
+		// log.DIYf(log.LOG_DIY1, "", "peer id %v", peers[i].PeerId())
 		regionID := peers[i].regionId
 		_ = router.send(regionID, message.Msg{RegionID: regionID, Type: message.MsgTypeStart})
 	}

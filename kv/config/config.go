@@ -92,7 +92,8 @@ func NewDefaultConfig() *Config {
 
 func NewTestConfig() *Config {
 	return &Config{
-		LogLevel:                 getLogLevel(),
+		LogLevel: getLogLevel(),
+		// LogLevel:                 "LOG_LEVEL_DEBUG",
 		Raft:                     true,
 		RaftBaseTickInterval:     50 * time.Millisecond,
 		RaftHeartbeatTicks:       2,

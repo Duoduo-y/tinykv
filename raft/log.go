@@ -60,7 +60,7 @@ type RaftLog struct {
 func newLog(storage Storage) *RaftLog {
 	// Your Code Here (2A).
 	hstate, _, _ := storage.InitialState()
-	snapshot, _ := storage.Snapshot()
+	// snapshot, _ := storage.Snapshot()
 	firstIndex, _ := storage.FirstIndex()
 
 	lastIndex, _ := storage.LastIndex()
@@ -75,7 +75,7 @@ func newLog(storage Storage) *RaftLog {
 	return &RaftLog{
 		storage:   storage,
 		committed: hstate.Commit,
-		applied:   snapshot.Metadata.Index,
+		applied:   firstIndex - 1,
 		stabled:   lastIndex,
 		entries:   entries,
 		Offset:    firstIndex,

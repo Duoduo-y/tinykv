@@ -52,7 +52,7 @@ type PeerStorage struct {
 
 // NewPeerStorage get the persist raftState from engines and return a peer storage
 func NewPeerStorage(engines *engine_util.Engines, region *metapb.Region, regionSched chan<- worker.Task, tag string) (*PeerStorage, error) {
-	log.Debugf("%s creating storage for %s", tag, region.String())
+	log.Debugf("%s creating storage for\n %s", tag, region.String())
 	raftState, err := meta.InitRaftLocalState(engines.Raft, region)
 	if err != nil {
 		return nil, err
@@ -308,6 +308,30 @@ func ClearMeta(engines *engine_util.Engines, kvWB, raftWB *engine_util.WriteBatc
 // never be committed
 func (ps *PeerStorage) Append(entries []eraftpb.Entry, raftWB *engine_util.WriteBatch) error {
 	// Your Code Here (2B).
+	lastIndex, err := ps.LastIndex()
+	if err != nil {
+		return err
+	}
+	if entries[0].Index > lastIndex+1 {
+		return errors.Errorf("missing log entry [last: %d, append at: %d]", lastIndex, entries[0].Index)
+	}
+	for _, entry := range entries {
+		//覆盖
+		if entry.Index <= lastIndex {
+			raftWB.DeleteMeta(meta.RaftLogKey(ps.region.Id, entry.Index))
+		}
+		err := raftWB.SetMeta(meta.RaftLogKey(ps.region.Id, entry.Index), &entry)
+		if err != nil {
+			return err
+		}
+	}
+	//截断
+	for index := entries[len(entries)-1].Index + 1; index <= lastIndex; index++ {
+		raftWB.DeleteMeta(meta.RaftLogKey(ps.region.Id, index))
+	}
+	ps.raftState.LastIndex = entries[len(entries)-1].Index
+	ps.raftState.LastTerm = entries[len(entries)-1].Term
+
 	return nil
 }
 
@@ -327,11 +351,41 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 }
 
 // Save memory states to disk.
+// 追加日志条目和保存 Raft 的硬状态。
 // Do not modify ready in this function, this is a requirement to advance the ready object properly later.
 func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, error) {
 	// Hint: you may call `Append()` and `ApplySnapshot()` in this function
 	// Your Code Here (2B/2C).
-	return nil, nil
+	// log.DIY(log.LOG_DIY3, "SaveReadyState", "SaveReadyState")
+	// var raftWB *engine_util.WriteBatch
+	raftWB := new(engine_util.WriteBatch)
+	// var kvWB *engine_util.WriteBatch
+	var result *ApplySnapResult
+
+	if len(ready.Entries) > 0 {
+		if err := ps.Append(ready.Entries, raftWB); err != nil {
+			return nil, err
+		}
+	}
+	//写入KVDB
+	if err := ps.Engines.WriteKV(raftWB); err != nil {
+		return nil, err
+	}
+
+	//保存硬状态
+	if !raft.IsEmptyHardState(ready.HardState) {
+		ps.raftState.HardState = &ready.HardState
+	}
+
+	// if len(ready.CommittedEntries) > 0 {
+	// 	ps.applyState.AppliedIndex = ready.CommittedEntries[len(ready.CommittedEntries)-1].Index
+	// }
+
+	raftWB.SetMeta(meta.RaftStateKey(ps.region.Id), ps.raftState)
+	// kvWB.SetMeta(meta.ApplyStateKey(ps.region.Id), ps.applyState)
+	ps.Engines.WriteRaft(raftWB)
+	// ps.Engines.WriteKV(kvWB)
+	return result, nil
 }
 
 func (ps *PeerStorage) ClearData() {

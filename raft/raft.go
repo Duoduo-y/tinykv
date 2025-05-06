@@ -19,6 +19,7 @@ import (
 	"math"
 	"math/rand"
 
+	"github.com/pingcap-incubator/tinykv/log"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -175,9 +176,30 @@ func newRaft(c *Config) *Raft {
 	}
 	Prs := make(map[uint64]*Progress)
 	votes := make(map[uint64]bool)
-	hardState, _, _ := c.Storage.InitialState()
+	hardState, constate, _ := c.Storage.InitialState()
 
-	for _, id := range c.peers {
+	// if len(c.peers) > 0 {
+	// 	for _, id := range c.peers {
+	// 		Prs[id] = &Progress{
+	// 			Match: 0,
+	// 			Next:  1,
+	// 		}
+	// 		if id == hardState.Vote {
+	// 			votes[id] = true
+	// 		} else {
+	// 			votes[id] = false
+	// 		}
+	// 	}
+	// }
+	var ID []uint64
+	if len(c.peers) > 0 {
+		ID = c.peers
+		// log.DIYf(log.LOG_DIY4, "", "id from config: %v", ID)
+	} else if len(constate.Nodes) > 0 {
+		ID = constate.Nodes
+		// log.DIYf(log.LOG_DIY4, "", "id from constate: %v", ID)
+	}
+	for _, id := range ID {
 		Prs[id] = &Progress{
 			Match: 0,
 			Next:  1,
@@ -188,6 +210,7 @@ func newRaft(c *Config) *Raft {
 			votes[id] = false
 		}
 	}
+	// log.DIYf(log.LOG_DIY2, "DIY", "creat new raft ID: %v", c.ID)
 	// Your Code Here (2A).
 	// lastIndex, _ := c.Storage.LastIndex()
 	// term, _ := c.Storage.Term(lastIndex)
@@ -286,9 +309,10 @@ func (r *Raft) sendVoterequire(to uint64) {
 // tick advances the internal logical clock by a single tick.
 func (r *Raft) tick() {
 	// Your Code Here (2A).
-	r.electionElapsed++
 	if r.State != StateLeader {
+		r.electionElapsed++
 		if r.electionElapsed >= r.electionTimeoutTick {
+			log.DIYf(log.LOG_DIY4, "TimeOut", "ID:%d, state %v, time out tick %d, electionElapsedtick %d", r.id, r.State, r.electionTimeoutTick, r.electionElapsed)
 			//发起选举
 			r.Step(pb.Message{
 				MsgType: pb.MessageType_MsgHup,
@@ -309,7 +333,6 @@ func (r *Raft) tick() {
 func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	// Your Code Here (2A).
 	r.State = StateFollower
-	r.Vote = lead
 	for id := range r.votes {
 		r.votes[id] = false
 		r.Prs[id].Next = 1
@@ -347,6 +370,7 @@ func (r *Raft) becomeCandidate() {
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
+	log.DIYf(log.LOG_DIY1, "", "become leader %d", r.id)
 	r.State = StateLeader
 	r.Vote = 0
 	r.Lead = r.id
@@ -402,6 +426,7 @@ func (r *Raft) Step(m pb.Message) error {
 	case pb.MessageType_MsgRequestVote:
 		switch r.State {
 		case StateFollower, StateCandidate, StateLeader:
+			// log.DIYf(log.LOG_DIY4, "!!", "%d receive voterequire from %d", m.To, m.From)
 			r.handleVoterequire(m)
 		}
 
@@ -712,6 +737,8 @@ func (r *Raft) canCommitted(m pb.Message) bool {
 // handleHeartbeat handle Heartbeat RPC request
 func (r *Raft) handleHeartbeat(m pb.Message) {
 	// Your Code Here (2A).
+	log.DIYf(log.LOG_DIY4, "Receive heartbeat", "ID:%d, state %v, heart beat time out tick %d, heartbeatElapsed %d", r.id, r.State, r.heartbeatTimeout, r.heartbeatElapsed)
+
 	if r.Term > m.Term {
 		r.msgs = append(r.msgs, pb.Message{
 			MsgType: pb.MessageType_MsgHeartbeatResponse,
@@ -747,6 +774,7 @@ func (r *Raft) handleHeartbeatResponse(m pb.Message) {
 	if m.Reject {
 		r.becomeFollower(m.Term, m.From)
 	} else {
+		log.DIYf(log.LOG_DIY4, "heartbeatrespond", "Leader %d  Receive heartbeat response from %d  ", r.id, m.From)
 		//通过 m.Commit 判断节点是否落后了，如果是，则进行日志追加；
 		if m.Commit < r.RaftLog.committed { //还是比match？？？
 			r.sendAppend(m.From)
@@ -771,17 +799,22 @@ func (r *Raft) handleVoterequire(m pb.Message) {
 	if r.Term > m.Term {
 		//拒绝投票
 		r.msgs = append(r.msgs, RejectVoteMessage)
+		log.DIYf(log.LOG_DIY1, "reject", "%d vote for %d", m.To, m.From)
 		return
 	} else if r.Term == m.Term && r.Vote != None && r.Vote != m.From {
 		//一个Term只能投一张票，拒绝投票
 		r.msgs = append(r.msgs, RejectVoteMessage)
+		log.DIYf(log.LOG_DIY1, "reject", "%d vote for %d", m.To, m.From)
+
 		return
 	} else {
 		//比较日志新旧。如果两份日志最后的条目的任期号不同，那么任期号大的日志更加新。
 		// 如果两份日志最后的条目任期号相同，那么日志比较长的那个就更加新。
-		r.Term = m.Term
+		// r.Term = m.Term
+		r.becomeFollower(m.Term, None)
 		if (logterm == m.LogTerm && r.RaftLog.LastIndex() > m.Index) || (logterm > m.LogTerm) {
 			r.msgs = append(r.msgs, RejectVoteMessage)
+			log.DIYf(log.LOG_DIY1, "reject", "%d vote for %d", m.To, m.From)
 		} else {
 			//投票
 			r.msgs = append(r.msgs, pb.Message{
@@ -793,10 +826,9 @@ func (r *Raft) handleVoterequire(m pb.Message) {
 				Index:   r.RaftLog.LastIndex(),
 				Reject:  false,
 			})
-			// r.becomeFollower(m.Term, m.From)
+			r.Vote = m.From
+			log.DIYf(log.LOG_DIY1, "agree", "%d vote for %d", m.To, m.From)
 		}
-		r.becomeFollower(m.Term, None)
-		r.Vote = m.From
 	}
 
 }

@@ -168,6 +168,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 
 	nservers := 5
 	cfg := config.NewTestConfig()
+
 	if maxraftlog != -1 {
 		cfg.RaftLogGcCountLimit = uint64(maxraftlog)
 	}
@@ -176,12 +177,14 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 		cfg.RegionSplitSize = 200
 	}
 	cluster := NewTestCluster(nservers, cfg)
+
 	cluster.Start()
 	defer cluster.Shutdown()
 
 	electionTimeout := cfg.RaftBaseTickInterval * time.Duration(cfg.RaftElectionTimeoutTicks)
 	// Wait for leader election
 	time.Sleep(2 * electionTimeout)
+	// time.Sleep(5 * electionTimeout)
 
 	done_partitioner := int32(0)
 	done_confchanger := int32(0)
