@@ -113,7 +113,9 @@ func (d *peerMsgHandler) handlereq(req *raft_cmdpb.Request) (*raft_cmdpb.Respons
 		}
 		response.Delete = &raft_cmdpb.DeleteResponse{}
 	case raft_cmdpb.CmdType_Snap:
-		response.Snap = &raft_cmdpb.SnapResponse{}
+		response.Snap = &raft_cmdpb.SnapResponse{
+			Region: d.Region(),
+		}
 	}
 	return response, nil
 }
@@ -125,26 +127,35 @@ func (d *peerMsgHandler) donePropose(entry eraftpb.Entry, msg_response *raft_cmd
 	}
 	for len(d.proposals) > 0 {
 		proposal := d.proposals[0]
-		if proposal.index < entry.Index {
+		if proposal.index != entry.Index || proposal.term != entry.Term {
 			d.proposals = d.proposals[1:]
 			continue
-		} else if proposal.index > entry.Index {
-			proposal.cb.Done(ErrResp(&util.ErrStaleCommand{}))
-			return
-		} else {
-			//可能由于领导者的变化，一些日志没有被提交，就被新的领导者的日志所覆盖。
-			// 但是客户端并不知道，仍然在等待响应。所以你应该返回这个命令，让客户端知道并再次重试该命令。
-			if proposal.term < entry.Term {
-				proposal.cb.Done(ErrResp(&util.ErrStaleCommand{}))
-				return
-			} else if proposal.term > entry.Term {
-				d.proposals = d.proposals[1:]
-				continue
-			} else {
-				proposal.cb.Done(msg_response)
-				d.proposals = d.proposals[1:]
-			}
 		}
+		proposal.cb.Done(msg_response)
+		d.proposals = d.proposals[1:]
+		return
+
+		// if proposal.index < entry.Index {
+		// 	d.proposals = d.proposals[1:]
+		// 	continue
+		// } else if proposal.index > entry.Index {
+		// 	proposal.cb.Done(ErrResp(&util.ErrStaleCommand{}))
+		// 	return
+		// } else {
+		// 	//可能由于领导者的变化，一些日志没有被提交，就被新的领导者的日志所覆盖。
+		// 	// 但是客户端并不知道，仍然在等待响应。所以你应该返回这个命令，让客户端知道并再次重试该命令。
+		// 	if proposal.term < entry.Term {
+		// 		proposal.cb.Done(ErrResp(&util.ErrStaleCommand{}))
+		// 		return
+		// 	} else if proposal.term > entry.Term {
+		// 		d.proposals = d.proposals[1:]
+		// 		continue
+		// 	} else {
+		// 		proposal.cb.Done(msg_response)
+		// 		d.proposals = d.proposals[1:]
+		// 		return
+		// 	}
+		// }
 	}
 
 }

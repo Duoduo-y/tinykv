@@ -1,7 +1,9 @@
 .idea*
-.vscode*
+# .vscode*
 node/node
 unikv/unikv
 bin/*
 _tools
 /vendor
+*.log
+kv/test_raftstore/test_raftstore.log

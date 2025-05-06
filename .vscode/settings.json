@@ -1,0 +1,56 @@
+{
+    "workbench.editor.wrapTabs": true,
+    "go.testEnvVars": {
+    "LOG_LEVEL": "debug", // 设置日志等级
+    "LOG_FILE" : "test_raftstore.log" // 启动该环境变量则输出日志到文件
+  },
+  
+  
+    //   // vscode theme 染色显示规则（如日期、常量等）
+    //   "editor.tokenColorCustomizations": {
+    //     "textMateRules": [
+    //         {
+    //             "scope": "log.constant",
+    //             "settings": {
+    //                 "foreground": "#cccccc",
+    //                 "fontStyle": ""
+    //             }
+    //         },
+    //         {
+    //             "scope": "log.date",
+    //             "settings": {
+    //                 "foreground": "#cccccc",
+    //                 "fontStyle": ""
+    //             }
+    //         }
+    //     ]
+    // },
+
+      
+"files.associations": {
+    "*.log": "ansi"
+},
+// "workbench.editorAssociations": {
+//     // "*.txt": "vt100.preview",
+//     // "*.log": ""
+// }
+        
+          
+
+    // // logFileHighlighter 提供的正则匹配蓝色
+    // "logFileHighlighter.customPatterns": [
+    //     {
+    //         "pattern": "\\[info\\].*", // 目标为 [info]开头，直至行位 的字符串
+    //         "foreground": "#13bc79" // 亮绿色 
+    //     },
+    //     {
+    //         "pattern": "\\[debug\\].*", // 目标为 [debug]开头，直至行位 的字符串
+    //         "foreground": "#1d7dd1" // 深蓝青色
+    //     },
+    //     {
+    //         "pattern": "\\[Tick\\].*", // 目标为 [tick]开头，直至行位 的字符串
+    //         "foreground": "#d670ca" // 紫色
+    //     },
+    // ],
+    
+}
