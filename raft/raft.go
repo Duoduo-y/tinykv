@@ -178,19 +178,6 @@ func newRaft(c *Config) *Raft {
 	votes := make(map[uint64]bool)
 	hardState, constate, _ := c.Storage.InitialState()
 
-	// if len(c.peers) > 0 {
-	// 	for _, id := range c.peers {
-	// 		Prs[id] = &Progress{
-	// 			Match: 0,
-	// 			Next:  1,
-	// 		}
-	// 		if id == hardState.Vote {
-	// 			votes[id] = true
-	// 		} else {
-	// 			votes[id] = false
-	// 		}
-	// 	}
-	// }
 	var ID []uint64
 	if len(c.peers) > 0 {
 		ID = c.peers
@@ -312,7 +299,7 @@ func (r *Raft) tick() {
 	if r.State != StateLeader {
 		r.electionElapsed++
 		if r.electionElapsed >= r.electionTimeoutTick {
-			log.DIYf(log.LOG_DIY4, "TimeOut", "ID:%d, state %v, time out tick %d, electionElapsedtick %d", r.id, r.State, r.electionTimeoutTick, r.electionElapsed)
+			// log.DIYf(log.LOG_DIY4, "TimeOut", "ID:%d, state %v, time out tick %d, electionElapsedtick %d", r.id, r.State, r.electionTimeoutTick, r.electionElapsed)
 			//发起选举
 			r.Step(pb.Message{
 				MsgType: pb.MessageType_MsgHup,
@@ -341,7 +328,7 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.Term = term
 	r.Lead = lead
 	r.electionElapsed = 0
-
+	r.Vote = lead
 	r.electionTimeoutTick = r.randomElectionTimeout(r.electionTimeout)
 }
 
@@ -432,6 +419,7 @@ func (r *Raft) Step(m pb.Message) error {
 
 		// 'MessageType_MsgRequestVoteResponse' contains responses from voting request.
 	case pb.MessageType_MsgRequestVoteResponse:
+		// log.DIYf(log.LOG_DIY1, "receive voteresponse", "%d vote for %d, now state is %v", m.From, m.To, r.State)
 		switch r.State {
 		case StateFollower:
 		case StateCandidate:
@@ -444,6 +432,7 @@ func (r *Raft) Step(m pb.Message) error {
 				}
 			} else {
 				r.countagree++
+				log.DIYf(log.LOG_DIY1, "receive agree", "%d vote for %d, countagree is %d", m.From, m.To, r.countagree)
 				if r.countagree >= int(math.Floor(float64(len(r.Prs))/2))+1 {
 					if r.State == StateCandidate {
 						r.becomeLeader()
@@ -616,11 +605,7 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 						if entry.Index > r.RaftLog.LastIndex() {
 							r.RaftLog.entries = append(r.RaftLog.entries, *entry)
 						} else {
-							if r.RaftLog.entries[entry.Index-r.RaftLog.Offset].Term == entry.Term {
-								isstablechange = false
-
-							} else {
-
+							if r.RaftLog.entries[entry.Index-r.RaftLog.Offset].Term != entry.Term {
 								if !isstablechange {
 									r.RaftLog.stabled = entry.Index - 1
 									isstablechange = true
@@ -640,6 +625,11 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 				}
 				agreemessage.Commit = r.RaftLog.committed
 				r.msgs = append(r.msgs, agreemessage)
+				log.DIYf(log.LOG_DIY4, "committed", "ID:%d, state %v, committed %d", r.id, r.State, m.Index)
+
+				for _, entry := range r.RaftLog.entries {
+					log.DIYf(log.LOG_DIY4, "committed", "ID:%d,entries %v", r.id, string(entry.Data))
+				}
 			}
 		}
 	}
@@ -729,6 +719,11 @@ func (r *Raft) canCommitted(m pb.Message) bool {
 	}
 	if count >= int(math.Floor(float64(len(r.Prs))/2))+1 {
 		r.RaftLog.committed = m.Index
+		log.DIYf(log.LOG_DIY4, "committed", "ID:%d, state %v, committed %d", r.id, r.State, m.Index)
+
+		for _, entry := range r.RaftLog.entries {
+			log.DIYf(log.LOG_DIY4, "committed", "ID:%d, entries %v", r.id, string(entry.Data))
+		}
 		return true
 	}
 	return false
@@ -737,7 +732,7 @@ func (r *Raft) canCommitted(m pb.Message) bool {
 // handleHeartbeat handle Heartbeat RPC request
 func (r *Raft) handleHeartbeat(m pb.Message) {
 	// Your Code Here (2A).
-	log.DIYf(log.LOG_DIY4, "Receive heartbeat", "ID:%d, state %v, heart beat time out tick %d, heartbeatElapsed %d", r.id, r.State, r.heartbeatTimeout, r.heartbeatElapsed)
+	// log.DIYf(log.LOG_DIY4, "Receive heartbeat", "ID:%d, state %v, heart beat time out tick %d, heartbeatElapsed %d", r.id, r.State, r.heartbeatTimeout, r.heartbeatElapsed)
 
 	if r.Term > m.Term {
 		r.msgs = append(r.msgs, pb.Message{
@@ -774,7 +769,7 @@ func (r *Raft) handleHeartbeatResponse(m pb.Message) {
 	if m.Reject {
 		r.becomeFollower(m.Term, m.From)
 	} else {
-		log.DIYf(log.LOG_DIY4, "heartbeatrespond", "Leader %d  Receive heartbeat response from %d  ", r.id, m.From)
+		// log.DIYf(log.LOG_DIY4, "heartbeatrespond", "Leader %d  Receive heartbeat response from %d  ", r.id, m.From)
 		//通过 m.Commit 判断节点是否落后了，如果是，则进行日志追加；
 		if m.Commit < r.RaftLog.committed { //还是比match？？？
 			r.sendAppend(m.From)
@@ -799,12 +794,12 @@ func (r *Raft) handleVoterequire(m pb.Message) {
 	if r.Term > m.Term {
 		//拒绝投票
 		r.msgs = append(r.msgs, RejectVoteMessage)
-		log.DIYf(log.LOG_DIY1, "reject", "%d vote for %d", m.To, m.From)
+		// log.DIYf(log.LOG_DIY1, "reject", "%d vote for %d", m.To, m.From)
 		return
 	} else if r.Term == m.Term && r.Vote != None && r.Vote != m.From {
 		//一个Term只能投一张票，拒绝投票
 		r.msgs = append(r.msgs, RejectVoteMessage)
-		log.DIYf(log.LOG_DIY1, "reject", "%d vote for %d", m.To, m.From)
+		// log.DIYf(log.LOG_DIY1, "reject", "%d vote for %d", m.To, m.From)
 
 		return
 	} else {
@@ -814,7 +809,7 @@ func (r *Raft) handleVoterequire(m pb.Message) {
 		r.becomeFollower(m.Term, None)
 		if (logterm == m.LogTerm && r.RaftLog.LastIndex() > m.Index) || (logterm > m.LogTerm) {
 			r.msgs = append(r.msgs, RejectVoteMessage)
-			log.DIYf(log.LOG_DIY1, "reject", "%d vote for %d", m.To, m.From)
+			// log.DIYf(log.LOG_DIY1, "reject", "%d vote for %d", m.To, m.From)
 		} else {
 			//投票
 			r.msgs = append(r.msgs, pb.Message{

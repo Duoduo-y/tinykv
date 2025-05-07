@@ -79,7 +79,10 @@ func (d *peerMsgHandler) applyCommittedEntries(ready *raft.Ready) error {
 				CurrentTerm: d.Term(),
 			}
 		}
-		d.donePropose(entry, msg_response)
+		if d.IsLeader() {
+			log.DIYf(log.LOG_DIY3, "", "%s apply committed entries %s", d.Tag, msg_request.String())
+			d.donePropose(entry, msg_response)
+		}
 	}
 	return nil
 
@@ -105,6 +108,7 @@ func (d *peerMsgHandler) handlereq(req *raft_cmdpb.Request) (*raft_cmdpb.Respons
 			log.Errorf("%s failed to put %v", d.Tag, err)
 			return nil, err
 		}
+		log.DIYf(log.LOG_DIY3, "", "%s put %s %s", d.Tag, req.Put.Cf, req.Put.GetKey())
 		response.Put = &raft_cmdpb.PutResponse{}
 	case raft_cmdpb.CmdType_Delete:
 		if err := engine_util.DeleteCF(d.ctx.engine.Kv, req.Delete.Cf, req.Delete.GetKey()); err != nil {
@@ -125,12 +129,14 @@ func (d *peerMsgHandler) donePropose(entry eraftpb.Entry, msg_response *raft_cmd
 		log.Errorf("%s no proposals to done", d.Tag)
 		return
 	}
+	// log.DIYf(log.LOG_DIY2, "Propose", "entry is %s", string(entry.GetData()))
 	for len(d.proposals) > 0 {
 		proposal := d.proposals[0]
 		if proposal.index != entry.Index || proposal.term != entry.Term {
 			d.proposals = d.proposals[1:]
 			continue
 		}
+		log.DIYf(log.LOG_DIY3, "Done Propose", "%d done proposal %d", d.PeerId(), proposal.index)
 		proposal.cb.Done(msg_response)
 		d.proposals = d.proposals[1:]
 		return
@@ -174,7 +180,7 @@ func (d *peerMsgHandler) HandleMsg(msg message.Msg) {
 	case message.MsgTypeTick:
 		d.onTick()
 		if d.IsLeader() {
-			log.DIYf(log.LOG_DIY2, "WOW", "%d handle message Tick", d.PeerId())
+			// log.DIYf(log.LOG_DIY2, "WOW", "%d handle message Tick", d.PeerId())
 		}
 	case message.MsgTypeSplitRegion:
 		split := msg.Data.(*message.MsgSplitRegion)
