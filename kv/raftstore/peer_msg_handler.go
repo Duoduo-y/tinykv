@@ -63,7 +63,7 @@ func (d *peerMsgHandler) applyCommittedEntries(ready *raft.Ready) error {
 	for _, entry := range ready.CommittedEntries {
 		msg_request := raft_cmdpb.RaftCmdRequest{}
 		msg_response := new(raft_cmdpb.RaftCmdResponse)
-
+		log.DIYf(log.LOG_DIY3, "Entry", "%s apply committed entries %s", d.Tag, entry.String())
 		if err := msg_request.Unmarshal(entry.Data); err != nil {
 			log.Errorf("%s failed to unmarshal entry %v", d.Tag, err)
 			return err
@@ -80,7 +80,7 @@ func (d *peerMsgHandler) applyCommittedEntries(ready *raft.Ready) error {
 			}
 		}
 		if d.IsLeader() {
-			log.DIYf(log.LOG_DIY3, "", "%s apply committed entries %s", d.Tag, msg_request.String())
+			log.DIYf(log.LOG_DIY3, "", "%s Leader %d apply committed entries %s", d.Tag, d.PeerId(), msg_request.String())
 			d.donePropose(entry, msg_response)
 		}
 	}
@@ -93,9 +93,9 @@ func (d *peerMsgHandler) handlereq(req *raft_cmdpb.Request) (*raft_cmdpb.Respons
 	}
 	switch req.CmdType {
 	case raft_cmdpb.CmdType_Invalid:
-
 	case raft_cmdpb.CmdType_Get:
 		val, err := engine_util.GetCF(d.ctx.engine.Kv, req.Get.Cf, req.Get.GetKey())
+		log.DIYf(log.LOG_DIY3, "GET", "%s get %s %s", d.Tag, req.Get.Cf, req.Get.GetKey())
 		if err != nil {
 			log.Errorf("%s failed to get %v", d.Tag, err)
 			return nil, err
@@ -129,40 +129,33 @@ func (d *peerMsgHandler) donePropose(entry eraftpb.Entry, msg_response *raft_cmd
 		log.Errorf("%s no proposals to done", d.Tag)
 		return
 	}
-	// log.DIYf(log.LOG_DIY2, "Propose", "entry is %s", string(entry.GetData()))
+	log.DIYf(log.LOG_DIY2, "Propose", "entry is %s", string(entry.GetData()))
 	for len(d.proposals) > 0 {
 		proposal := d.proposals[0]
+		log.DIYf(log.LOG_DIY1, "Proposal message", "proposal is %v(term: %d, index:%d ), d.proposals len is %d", proposal, proposal.term, proposal.index, len(d.proposals))
+		log.DIYf(log.LOG_DIY1, "Entry message", "entry is %v(term: %d, index:%d )", string(entry.Data), entry.Term, entry.Index)
+
 		if proposal.index != entry.Index || proposal.term != entry.Term {
 			d.proposals = d.proposals[1:]
 			continue
 		}
-		log.DIYf(log.LOG_DIY3, "Done Propose", "%d done proposal %d", d.PeerId(), proposal.index)
+
+		for _, respond := range msg_response.Responses {
+			if respond.CmdType == raft_cmdpb.CmdType_Snap {
+				log.DIYf(log.LOG_DIY3, "Snap", "%s snap %s", d.Tag, respond.Snap.Region)
+				proposal.cb.Txn = d.ctx.engine.Kv.NewTransaction(false)
+			}
+		}
+
 		proposal.cb.Done(msg_response)
+		log.DIYf(log.LOG_DIY3, "Done Propose", "%d done proposal (term:%d, index %d)", d.PeerId(), proposal.term, proposal.index)
 		d.proposals = d.proposals[1:]
 		return
-
-		// if proposal.index < entry.Index {
-		// 	d.proposals = d.proposals[1:]
-		// 	continue
-		// } else if proposal.index > entry.Index {
-		// 	proposal.cb.Done(ErrResp(&util.ErrStaleCommand{}))
-		// 	return
-		// } else {
-		// 	//可能由于领导者的变化，一些日志没有被提交，就被新的领导者的日志所覆盖。
-		// 	// 但是客户端并不知道，仍然在等待响应。所以你应该返回这个命令，让客户端知道并再次重试该命令。
-		// 	if proposal.term < entry.Term {
-		// 		proposal.cb.Done(ErrResp(&util.ErrStaleCommand{}))
-		// 		return
-		// 	} else if proposal.term > entry.Term {
-		// 		d.proposals = d.proposals[1:]
-		// 		continue
-		// 	} else {
-		// 		proposal.cb.Done(msg_response)
-		// 		d.proposals = d.proposals[1:]
-		// 		return
-		// 	}
-		// }
 	}
+
+	// if proposal.cb.Txn != nil {
+	// 	defer proposal.cb.Txn.Discard()
+	// }
 
 }
 
@@ -248,19 +241,26 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 			return
 		}
 
-		if err := d.RaftGroup.Propose(data); err != nil {
-			log.Errorf("%s failed to propose request %v", d.Tag, err)
-			cb.Done(ErrResp(err))
-			return
-		}
-
 		proposal := &proposal{
 			index: d.nextProposalIndex(),
 			term:  d.Term(),
 			cb:    cb,
 		}
 		d.proposals = append(d.proposals, proposal)
-		log.DIYf(log.LOG_DIY3, "Proposal", "%d proposal callback %v", d.PeerId(), proposal)
+
+		if err := d.RaftGroup.Propose(data); err != nil {
+			log.Errorf("%s failed to propose request %v", d.Tag, err)
+			cb.Done(ErrResp(err))
+			return
+		}
+
+		// proposal := &proposal{
+		// 	index: d.nextProposalIndex(),
+		// 	term:  d.Term(),
+		// 	cb:    cb,
+		// }
+		// d.proposals = append(d.proposals, proposal)
+		log.DIYf(log.LOG_DIY3, "proposeRaftCommand", "%d proposal is %v(term:%d, index:%d)", d.PeerId(), proposal, proposal.term, proposal.index)
 
 	}
 	// Your Code Here (2B).

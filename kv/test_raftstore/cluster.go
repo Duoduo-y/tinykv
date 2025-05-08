@@ -217,7 +217,7 @@ func (c *Cluster) CallCommandOnLeader(request *raft_cmdpb.RaftCmdRequest, timeou
 	startTime := time.Now()
 	regionID := request.Header.RegionId
 	leader := c.LeaderOfRegion(regionID)
-	log.DIYf(log.LOG_DIY1, "!!!", "Now leader id %d", leader.Id)
+	log.DIYf(log.LOG_DIY1, "!!!", "Now leader id %d, msg_request is %v", leader.Id, request)
 	for {
 		if time.Since(startTime) > timeout {
 			return nil, nil

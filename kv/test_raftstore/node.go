@@ -208,8 +208,11 @@ func (c *NodeSimulator) CallCommandOnStore(storeID uint64, request *raft_cmdpb.R
 	c.RUnlock()
 
 	cb := message.NewCallback()
+
+	log.Infof("NodeSimulator CallCommandOnStore msg_request is %v, callback is %v", request, cb)
 	err := router.SendRaftCommand(request, cb)
 	if err != nil {
+		log.DIYf(log.LOG_DIY1, "NodeSimulator CallCommandOnStore fail ", "msg_request is %v, callback is %v", request, cb)
 		return nil, nil
 	}
 

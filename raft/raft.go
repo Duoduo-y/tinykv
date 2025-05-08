@@ -432,7 +432,7 @@ func (r *Raft) Step(m pb.Message) error {
 				}
 			} else {
 				r.countagree++
-				log.DIYf(log.LOG_DIY1, "receive agree", "%d vote for %d, countagree is %d", m.From, m.To, r.countagree)
+				// log.DIYf(log.LOG_DIY1, "receive agree", "%d vote for %d, countagree is %d", m.From, m.To, r.countagree)
 				if r.countagree >= int(math.Floor(float64(len(r.Prs))/2))+1 {
 					if r.State == StateCandidate {
 						r.becomeLeader()
@@ -625,11 +625,11 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 				}
 				agreemessage.Commit = r.RaftLog.committed
 				r.msgs = append(r.msgs, agreemessage)
-				log.DIYf(log.LOG_DIY4, "committed", "ID:%d, state %v, committed %d", r.id, r.State, m.Index)
+				// log.DIYf(log.LOG_DIY4, "committed", "ID:%d, state %v, committed %d", r.id, r.State, m.Index)
 
-				for _, entry := range r.RaftLog.entries {
-					log.DIYf(log.LOG_DIY4, "committed", "ID:%d,entries %v", r.id, string(entry.Data))
-				}
+				// for i, entry := range r.RaftLog.entries {
+				// log.DIYf(log.LOG_DIY4, "committed", "ID:%d, entries %d(term:%d, index:%d) data is %v", r.id, i, entry.Term, entry.Index, string(entry.Data))
+				// }
 			}
 		}
 	}
@@ -719,11 +719,11 @@ func (r *Raft) canCommitted(m pb.Message) bool {
 	}
 	if count >= int(math.Floor(float64(len(r.Prs))/2))+1 {
 		r.RaftLog.committed = m.Index
-		log.DIYf(log.LOG_DIY4, "committed", "ID:%d, state %v, committed %d", r.id, r.State, m.Index)
+		// log.DIYf(log.LOG_DIY4, "committed", "ID:%d, state %v, committed %d", r.id, r.State, m.Index)
 
-		for _, entry := range r.RaftLog.entries {
-			log.DIYf(log.LOG_DIY4, "committed", "ID:%d, entries %v", r.id, string(entry.Data))
-		}
+		// for i, entry := range r.RaftLog.entries {
+		// 	log.DIYf(log.LOG_DIY4, "committed", "ID:%d, entries %d(term:%d index:%d) data is %v", r.id, i, entry.Term, entry.Index, string(entry.Data))
+		// }
 		return true
 	}
 	return false
